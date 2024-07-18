@@ -10,6 +10,7 @@ from ultralytics import YOLO
 from urllib.parse import parse_qs
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from deep_sort_realtime.deepsort_tracker import DeepSort
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -21,6 +22,10 @@ MODEL_PATH_HELMET = './model/best_helmet_end.pt'
 VIOLATION_FOLDER = './violations'
 os.makedirs(VIOLATION_FOLDER, exist_ok=True)
 active_websocket = None
+
+#deep sort
+track_vehicle = DeepSort(max_age=30)
+track_helmet = DeepSort(max_age=30)
 
 # Load YOLO models
 model_vehicle = YOLO(MODEL_PATH_VEHICLE)
@@ -57,7 +62,7 @@ async def get_camera(request: Request):
     return templates.TemplateResponse("camera.html", {"request": request, "video_files": video_files, "enumerate": enumerate})
 
 @app.websocket("/ws/{video_name}")
-async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int = 100, roi_y1: int = 350, roi_x2: int = 1150, roi_y2: int = 750):
+async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int = 100, roi_y1: int = 350, roi_x2: int = 1150, roi_y2: int = 750,track_xe = True):
     global active_websocket
     if active_websocket:
         await active_websocket.close()
@@ -85,19 +90,33 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
             roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
 
             if vehicle_detection or helmet_violation or lane_departure:
+                detect_vehicle = []
+                detect_helmet = []
                 # Perform YOLO prediction for vehicles within the ROI
-                results_vehicle = model_vehicle.predict(source=roi, imgsz=320, conf=0.45, iou=0.45)[0]
+                results_vehicle = model_vehicle.predict(source=roi, imgsz=320, conf=0.3, iou=0.4)[0]
                 for box in results_vehicle.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    label = box.cls[0]
-                    confidence = box.conf[0]
-                    # Enable vehicle detection for all vehicle types recognized by the model
+                    conf = box.conf.item()
+                    cls = int(box.cls.item())
+                    detect_vehicle.append([[x1,y1,x2-x1,y2-y1],conf,cls])
+                    
+                current_track_vehicle = track_vehicle.update_tracks(detect_vehicle, frame = roi)
+
+                for i,track in enumerate(current_track_vehicle):
+                    if not (track.is_confirmed() and track.det_conf ):
+                        continue
+
+                    ltrb = track.to_ltrb()
+                    x1, y1, x2, y2 = list(map(int, ltrb))
+                    track_id = track.track_id
+                    label = track.det_class
+                    confidence =  track.det_conf
+               
                     if vehicle_detection and confidence > 0.65:  # Only process detections with a confidence greater than 0.65
-                        text = f"{model_vehicle.names[int(label)]}: {confidence:.2f}"
+                        text = f"{model_vehicle.names[int(label)]} , id : {track_id}, conf: {round(confidence,2)}"
                         cv2.rectangle(roi, (x1, y1), (x2, y2), (0, 255, 0), 1)
                         cv2.putText(roi, text, (x1, y1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
 
-                        # Crop the detected area for helmet detection
                         crop_img = roi[y1:y2, x1:x2]
                         if helmet_violation and crop_img.size != 0:
                             results_helmet = model_helmet.predict(source=crop_img, imgsz=320, conf=0.45, iou=0.45)[0]
