@@ -115,36 +115,63 @@
                                         {% endfor %}
                                     </select>
                                 </div>
+                                <div class="col-lg-12 mb-4">
+                                    <div class="card shadow mb-4">
+                                        <div class="card-header py-3">
+                                            <h6 class="m-0 font-weight-bold text-primary">Camera Feed</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <img id="cameraFeed" alt="Camera Feed" style="width:100%; height: auto;">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div class="col-lg-6 mb-4">
                             <div class="card shadow mb-4">
                                 <div class="card-header py-3">
-                                    <h6 class="m-0 font-weight-bold text-primary">Camera Feed</h6>
+                                    <h6 class="m-0 font-weight-bold text-primary">Camera Settings</h6>
                                 </div>
                                 <div class="card-body">
-                                    <img id="cameraFeed" alt="Camera Feed" style="width:100%; height: auto;">
-                                    <script>
-                                        var ws;
-                                        document.getElementById('videoSelect').addEventListener('change', function() {
-                                            if (ws) {
-                                                ws.close();
-                                            }
-                                            var video = this.value;
-                                            ws = new WebSocket("ws://localhost:8000/ws/" + video);
-                                            var img = document.getElementById("cameraFeed");
-
-                                            ws.onmessage = function(event) {
-                                                var blob = new Blob([event.data], { type: 'image/jpeg' });
-                                                var url = URL.createObjectURL(blob);
-                                                img.src = url;
-                                            };
-                                        });
-                                        document.getElementById('videoSelect').dispatchEvent(new Event('change'));
-                                    </script>
+                                    <form>
+                                        <div class="form-group">
+                                            <div class="custom-control custom-checkbox">
+                                                <input type="checkbox" class="custom-control-input" id="vehicleDetection">
+                                                <label class="custom-control-label" for="vehicleDetection">Vehicle Detection</label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <div class="custom-control custom-checkbox">
+                                                <input type="checkbox" class="custom-control-input" id="helmetViolation">
+                                                <label class="custom-control-label" for="helmetViolation">Helmet Violation Detection</label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <div class="custom-control custom-checkbox">
+                                                <input type="checkbox" class="custom-control-input" id="laneDeparture">
+                                                <label class="custom-control-label" for="laneDeparture">Lane Departure Detection</label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="roi_x1">ROI X1:</label>
+                                            <input type="number" class="form-control" id="roi_x1" value="100">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="roi_y1">ROI Y1:</label>
+                                            <input type="number" class="form-control" id="roi_y1" value="350">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="roi_x2">ROI X2:</label>
+                                            <input type="number" class="form-control" id="roi_x2" value="1150">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="roi_y2">ROI Y2:</label>
+                                            <input type="number" class="form-control" id="roi_y2" value="750">
+                                        </div>
+                                    </form>
                                 </div>
                             </div>
-                        </div>
+                        </div>                        
                     </div>
                 </div>
             </div>
@@ -153,6 +180,41 @@
     <a class="scroll-to-top rounded" href="#page-top">
         <i class="fas fa-angle-up"></i>
     </a>
+    <script>
+        var ws;
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+            }
+            var video = document.getElementById('videoSelect').value;
+            var vehicleDetection = document.getElementById('vehicleDetection').checked;
+            var helmetViolation = document.getElementById('helmetViolation').checked;
+            var laneDeparture = document.getElementById('laneDeparture').checked;
+            var roi_x1 = document.getElementById('roi_x1').value;
+            var roi_y1 = document.getElementById('roi_y1').value;
+            var roi_x2 = document.getElementById('roi_x2').value;
+            var roi_y2 = document.getElementById('roi_y2').value;
+            ws = new WebSocket(`ws://localhost:8000/ws/${video}?vehicleDetection=${vehicleDetection}&helmetViolation=${helmetViolation}&laneDeparture=${laneDeparture}&roi_x1=${roi_x1}&roi_y1=${roi_y1}&roi_x2=${roi_x2}&roi_y2=${roi_y2}`);
+            var img = document.getElementById("cameraFeed");
+
+            ws.onmessage = function(event) {
+                var blob = new Blob([event.data], { type: 'image/jpeg' });
+                var url = URL.createObjectURL(blob);
+                img.src = url;
+            };
+        }
+
+        document.getElementById('videoSelect').addEventListener('change', connectWebSocket);
+        document.getElementById('vehicleDetection').addEventListener('change', connectWebSocket);
+        document.getElementById('helmetViolation').addEventListener('change', connectWebSocket);
+        document.getElementById('laneDeparture').addEventListener('change', connectWebSocket);
+        document.getElementById('roi_x1').addEventListener('change', connectWebSocket);
+        document.getElementById('roi_y1').addEventListener('change', connectWebSocket);
+        document.getElementById('roi_x2').addEventListener('change', connectWebSocket);
+        document.getElementById('roi_y2').addEventListener('change', connectWebSocket);
+
+        document.getElementById('videoSelect').dispatchEvent(new Event('change'));
+    </script>
     <script src="/static/vendor/jquery/jquery.min.js"></script>
     <script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
     <script src="/static/vendor/jquery-easing/jquery.easing.min.js"></script>
