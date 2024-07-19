@@ -11,6 +11,11 @@ from urllib.parse import parse_qs
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from deep_sort_realtime.deepsort_tracker import DeepSort
+import numpy as np
+from ultralytics import YOLO
+from deep_sort_realtime.deepsort_tracker import DeepSort
+from tqdm import tqdm
+from utils import *
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -26,7 +31,7 @@ active_websocket = None
 #deep sort
 track_vehicle = DeepSort(max_age=30)
 track_helmet = DeepSort(max_age=30)
-
+track_light = DeepSort(max_age=30)
 # Load YOLO models
 model_vehicle = YOLO(MODEL_PATH_VEHICLE)
 model_helmet = YOLO(MODEL_PATH_HELMET)
@@ -155,3 +160,120 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
         cap.release()
         active_websocket = None
         await websocket.close()
+
+
+
+
+
+def websocket_endpoint_traffic_detection(websocket: WebSocket = None,
+                                          video_name: str = None,
+                                          roi_x1: int = 100,
+                                          roi_y1: int = 350,
+                                          roi_x2: int = 1150,
+                                          roi_y2: int = 750,
+                                          light_roi_x1 = 0,
+                                          light_roi_y1 = 0,
+                                          light_roi_x2 = 0,
+                                          light_roi_y2 = 0,
+                                          y_line = 450):
+    tich_luy = 0
+    state_all = {}
+    ok = {}
+    
+    video_path = os.path.join(VIDEO_BASE_PATH, video_name)
+    cap = cv2.VideoCapture(video_path)
+    colors = np.random.randint(0,255, size=(5,3 ))
+ 
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # Crop to the region of interest
+            roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
+            light_frame = frame[light_roi_y1:light_roi_y2,light_roi_x1:light_roi_x2,:]
+
+            red, tich_luy,_ = is_red(light_frame, tich_luy_hien_tai=tich_luy)
+            text = 'red' if red else 'green'
+            light_color = (0,0,255) if red else (0,255,0)
+
+            result = model_vehicle.predict(roi,conf = 0.35,verbose = False)
+           
+
+            if len(result):
+                result = result[0]
+                names = result.names
+                detect = []
+                for box in result.boxes:
+                    
+                    x1,y1,x2,y2 = list(map(int,box.xyxy[0]))
+                    conf = box.conf.item()
+                    cls = int(box.cls.item())
+                    detect.append([[x1,y1,x2-x1,y2-y1],conf,cls])
+
+                tracks = track_light.update_tracks(detect, frame = roi)
+                
+                for i,track in enumerate(tracks):
+                    if track.is_confirmed() and track.det_conf :
+                        
+                        ltrb = track.to_ltrb()
+                        x1, y1, x2, y2 = list(map(int, ltrb))
+                        yc = y1+abs(y2-y1)//2
+                        
+                        track_id = track.track_id
+                        name = names[track.det_class]
+                        color = (colors[track.det_class]).tolist()
+                        is_ok = ok.get(track_id,None)
+                        
+                        label = None
+                        if is_ok:
+                            label = "k vuot" if ok[track_id] == 2 else 'vuot'
+                        else:
+                            state = state_all.get(track_id)
+                            
+                            if state is None:
+                                if yc < y_line:
+                                    ok[track_id] = 2
+                                    label = "k vuot"
+                                else:
+                                    state_all[track_id] = red
+                            else:
+                                if yc < y_line:
+                                    ok[track_id] = 1 if state_all[track_id] else 2
+                                    label = "k vuot" if ok[track_id] == 2 else 'vuot'
+                                else:
+                                    state_all[track_id] = red
+
+                    
+                        if label is None:
+                            label = f"{track_id} : {name[:3]} {round(track.det_conf, 2)}"
+                        else:
+                            color = (0,0,255) if label == 'vuot' else (0,255,0)
+                    
+                    if label is None:
+                        label = f"{track_id} : {name[:3]} {round(track.det_conf, 2)}"
+                    else:
+                        color = (0,0,255) if label == 'vuot' else (0,255,0)
+                        
+                    
+                    cv2.rectangle(roi, (x1, y1), (x2, y2),  color, 2)
+                    cv2.rectangle(roi, (x1 - 1, y1 - 20), (x1 + len(label) * 12, y1),  color, -1)
+                    cv2.putText(roi, label, (x1 + 5, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Place the ROI back into the original frame
+            frame[roi_y1:roi_y2, roi_x1:roi_x2] = roi
+
+            frame = draw_text(frame,text,color=light_color)
+
+
+
+
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        cap.release()
+        active_websocket = None
+       
+
