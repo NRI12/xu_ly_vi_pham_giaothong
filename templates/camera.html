@@ -142,23 +142,23 @@
                                                 <option value="light">Traffic Light Violation Detection</option>
                                             </select>
                                         </div>
-                                        <div class="form-group">
+                                        <div class="form-group roi-settings">
                                             <label for="roi_x1">ROI X1:</label>
                                             <input type="number" class="form-control" id="roi_x1" value="100">
                                         </div>
-                                        <div class="form-group">
+                                        <div class="form-group roi-settings">
                                             <label for="roi_y1">ROI Y1:</label>
                                             <input type="number" class="form-control" id="roi_y1" value="350">
                                         </div>
-                                        <div class="form-group">
+                                        <div class="form-group roi-settings">
                                             <label for="roi_x2">ROI X2:</label>
                                             <input type="number" class="form-control" id="roi_x2" value="1150">
                                         </div>
-                                        <div class="form-group">
+                                        <div class="form-group roi-settings">
                                             <label for="roi_y2">ROI Y2:</label>
                                             <input type="number" class="form-control" id="roi_y2" value="750">
                                         </div>
-                                        <div class="form-group" id="lightRoiSettings" style="display: none;">
+                                        <div class="form-group light-settings" style="display: none;">
                                             <label for="light_roi_x1">Light ROI X1:</label>
                                             <input type="number" class="form-control" id="light_roi_x1" value="0">
                                             <label for="light_roi_y1">Light ROI Y1:</label>
@@ -169,6 +169,24 @@
                                             <input type="number" class="form-control" id="light_roi_y2" value="0">
                                             <label for="y_line">Y Line:</label>
                                             <input type="number" class="form-control" id="y_line" value="450">
+                                        </div>
+                                        <div class="form-group lane-settings" style="display: none;">
+                                            <label for="leftLaneLabels">Left Lane Vehicle Labels:</label>
+                                            <select id="leftLaneLabels" class="form-control" multiple>
+                                                <option value="car">Car</option>
+                                                <option value="truck">Truck</option>
+                                                <option value="motorcycle">Motorbike</option>
+                                                <option value="bus">Bus</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group lane-settings" style="display: none;">
+                                            <label for="rightLaneLabels">Right Lane Vehicle Labels:</label>
+                                            <select id="rightLaneLabels" class="form-control" multiple>
+                                                <option value="car">Car</option>
+                                                <option value="truck">Truck</option>
+                                                <option value="motorcycle">Motorbike</option>
+                                                <option value="bus">Bus</option>
+                                            </select>
                                         </div>
                                         <button type="button" class="btn btn-primary" onclick="startDetection()">Start Detection</button>
                                     </form>
@@ -199,7 +217,17 @@
             var roi_y1 = document.getElementById('roi_y1').value;
             var roi_x2 = document.getElementById('roi_x2').value;
             var roi_y2 = document.getElementById('roi_y2').value;
-            var ws_url = `ws://localhost:8000/ws/${video}?detectionType=${detectionType}&roi_x1=${roi_x1}&roi_y1=${roi_y1}&roi_x2=${roi_x2}&roi_y2=${roi_y2}`;
+            
+            // Read selections for left and right lane labels
+            var leftLabels = Array.from(document.getElementById('leftLaneLabels').selectedOptions).map(option => option.value);
+            var rightLabels = Array.from(document.getElementById('rightLaneLabels').selectedOptions).map(option => option.value);
+            
+            // Encode arrays as JSON strings to include in the WebSocket URL
+            var leftLabelsJson = encodeURIComponent(JSON.stringify(leftLabels));
+            var rightLabelsJson = encodeURIComponent(JSON.stringify(rightLabels));
+
+            var ws_url = `ws://localhost:8000/ws/${video}?detectionType=${detectionType}&roi_x1=${roi_x1}&roi_y1=${roi_y1}&roi_x2=${roi_x2}&roi_y2=${roi_y2}&leftLabels=${leftLabelsJson}&rightLabels=${rightLabelsJson}`;
+            
             if (detectionType === 'light') {
                 var light_roi_x1 = document.getElementById('light_roi_x1').value;
                 var light_roi_y1 = document.getElementById('light_roi_y1').value;
@@ -221,10 +249,26 @@
         document.getElementById('videoSelect').addEventListener('change', connectWebSocket);
         document.getElementById('detectionType').addEventListener('change', function() {
             var detectionType = document.getElementById('detectionType').value;
-            if (detectionType === 'light') {
-                document.getElementById('lightRoiSettings').style.display = 'block';
+            var roiSettings = document.querySelectorAll('.roi-settings');
+            var lightSettings = document.querySelectorAll('.light-settings');
+            var laneSettings = document.querySelectorAll('.lane-settings');
+
+            if (detectionType === 'vehicle' || detectionType === 'helmet') {
+                roiSettings.forEach(el => el.style.display = 'block');
+                lightSettings.forEach(el => el.style.display = 'none');
+                laneSettings.forEach(el => el.style.display = 'none');
+            } else if (detectionType === 'light') {
+                roiSettings.forEach(el => el.style.display = 'none');
+                lightSettings.forEach(el => el.style.display = 'block');
+                laneSettings.forEach(el => el.style.display = 'none');
+            } else if (detectionType === 'lane') {
+                roiSettings.forEach(el => el.style.display = 'block');
+                lightSettings.forEach(el => el.style.display = 'none');
+                laneSettings.forEach(el => el.style.display = 'block');
             } else {
-                document.getElementById('lightRoiSettings').style.display = 'none';
+                roiSettings.forEach(el => el.style.display = 'none');
+                lightSettings.forEach(el => el.style.display = 'none');
+                laneSettings.forEach(el => el.style.display = 'none');
             }
             connectWebSocket();
         });

@@ -4,7 +4,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
 import cv2
-import asyncio
 import sqlite3
 from ultralytics import YOLO
 from urllib.parse import parse_qs
@@ -13,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import numpy as np
 from utils import *
+import json
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -44,26 +44,38 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS violations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT,
                     image_path TEXT,
-                    video_path TEXT
+                    video_path TEXT,
+                    category TEXT
                   )''')
 conn.commit()
 
 executor = ThreadPoolExecutor()
 
-def save_violation_to_db(timestamp, image_path, video_path):
-    cursor.execute('INSERT INTO violations (timestamp, image_path, video_path) VALUES (?, ?, ?)',
-                   (timestamp, image_path, video_path))
+def save_violation_to_db(timestamp, image_path, video_path, category):
+    cursor.execute('INSERT INTO violations (timestamp, image_path, video_path, category) VALUES (?, ?, ?, ?)',
+                   (timestamp, image_path, video_path, category))
     conn.commit()
 
 @app.get("/", response_class=HTMLResponse)
 async def get_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+@app.get("/tables", response_class=HTMLResponse)
+async def get_root(request: Request):
+    return templates.TemplateResponse("tables.html", {"request": request})
 
 @app.get("/camera", response_class=HTMLResponse)
 async def get_camera(request: Request):
     video_files = os.listdir(VIDEO_BASE_PATH)
     return templates.TemplateResponse("camera.html", {"request": request, "video_files": video_files, "enumerate": enumerate})
+def get_all_violations():
+    cursor.execute("SELECT * FROM violations")
+    violations = cursor.fetchall()
+    return violations
 
+@app.get("/api/violations")
+async def read_violations():
+    violations = get_all_violations()
+    return JSONResponse(content={"data": violations})
 @app.websocket("/ws/{video_name}")
 async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int = 100, roi_y1: int = 350, roi_x2: int = 1150, roi_y2: int = 750):
     global active_websocket
@@ -77,6 +89,8 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
     # Parse query parameters
     query_params = parse_qs(websocket.url.query)
     detection_type = query_params.get('detectionType', ['none'])[0].lower()
+    left_labels = json.loads(query_params.get('leftLabels', ['[]'])[0])
+    right_labels = json.loads(query_params.get('rightLabels', ['[]'])[0])
 
     print(f"Connected to {video_name}")
     print(f"Detection Type: {detection_type}")
@@ -90,7 +104,7 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
             # Crop to the region of interest
             roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
 
-            if detection_type == 'vehicle':
+            if detection_type == 'vehicle' or detection_type == 'helmet':
                 detect_vehicle = []
                 results_vehicle = model_vehicle.predict(source=roi, imgsz=320, conf=0.3, iou=0.4)[0]
                 for box in results_vehicle.boxes:
@@ -116,49 +130,77 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
                         cv2.rectangle(roi, (x1, y1), (x2, y2), (0, 255, 0), 1)
                         cv2.putText(roi, text, (x1, y1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
 
-            elif detection_type == 'helmet':
-                detect_helmet = []
+                if detection_type == 'helmet':
+                    for i, track in enumerate(current_track_vehicle):
+                        if not (track.is_confirmed() and track.det_conf):
+                            continue
+
+                        ltrb = track.to_ltrb()
+                        x1, y1, x2, y2 = list(map(int, ltrb))
+                        crop_img = roi[y1:y2, x1:x2]
+                        if crop_img.size != 0:
+                            results_helmet = model_helmet.predict(source=crop_img, imgsz=320, conf=0.45, iou=0.45)[0]
+                            for helmet_box in results_helmet.boxes:
+                                hx1, hy1, hx2, hy2 = map(int, helmet_box.xyxy[0].tolist())
+                                hlabel = helmet_box.cls[0]
+                                hconfidence = helmet_box.conf[0]
+                                htext = f"{model_helmet.names[int(hlabel)]}: {hconfidence:.2f}"
+                                cv2.rectangle(roi, (x1 + hx1, y1 + hy1), (x1 + hx2, y1 + hy2), (255, 0, 0) if model_helmet.names[int(hlabel)] == "Without Helmet" else (0, 255, 0), 1)
+                                cv2.putText(roi, htext, (x1 + hx1, y1 + hy1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 0, 255) if model_helmet.names[int(hlabel)] == "Without Helmet" else (255, 0, 0), 1, cv2.LINE_AA)
+
+                                if hconfidence > 0.65 and model_helmet.names[int(hlabel)] == "Without Helmet":
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    violation_image_path = os.path.join(VIOLATION_FOLDER, f"violation_{timestamp}.jpg")
+                                    cv2.imwrite(violation_image_path, crop_img)
+
+                                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    executor.submit(save_violation_to_db, current_time, violation_image_path, video_path, "No Helmet")
+
+            elif detection_type == 'lane':
+                left_labels = json.loads(query_params.get('leftLabels', ['[]'])[0])
+                right_labels = json.loads(query_params.get('rightLabels', ['[]'])[0])
+                # Define midpoint
+                midpoint_x = roi_x1 + (roi_x2 - roi_x1) // 2  # Midpoint to divide lanes
+
+                # Draw the middle line
+                cv2.line(frame, (midpoint_x, roi_y1), (midpoint_x, roi_y2), (0, 0, 255), 2)
+
+                # Process vehicle detections
                 results_vehicle = model_vehicle.predict(source=roi, imgsz=320, conf=0.3, iou=0.4)[0]
                 for box in results_vehicle.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    conf = box.conf.item()
-                    cls = int(box.cls.item())
-                    detect_helmet.append([[x1, y1, x2 - x1, y2 - y1], conf, cls])
+                    vehicle_center_x = (x1 + x2) // 2
+                    vehicle_label = model_vehicle.names[int(box.cls.item())]
 
-                current_track_helmet = track_helmet.update_tracks(detect_helmet, frame=roi)
+                    if vehicle_label in left_labels:
+                        lane = "Left"
+                    elif vehicle_label in right_labels:
+                        lane = "Right"
+                    else:
+                        continue  # Ignore unknown labels
 
-                for i, track in enumerate(current_track_helmet):
-                    if not (track.is_confirmed() and track.det_conf):
-                        continue
+                    # Determine violation based on lane and position
+                    if (lane == "Left" and vehicle_center_x > midpoint_x) or (lane == "Right" and vehicle_center_x < midpoint_x):
+                        alert_message = f"Violation!!! Lane of vehicle in {lane}"
+                        violation_detected = True
+                        color = (0, 0, 255)  # Red for violation
+                    else:
+                        continue  # Only show violations
 
-                    ltrb = track.to_ltrb()
-                    x1, y1, x2, y2 = list(map(int, ltrb))
-                    track_id = track.track_id
-                    label = track.det_class
-                    confidence = track.det_conf
+                    # Highlight the vehicle and label it
+                    cv2.rectangle(frame, (roi_x1 + x1, roi_y1 + y1), (roi_x1 + x2, roi_y1 + y2), color, 2)
+                    cv2.putText(frame, f"{vehicle_label} - {alert_message}", (roi_x1 + x1, roi_y1 + y1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color, 2)
 
-                    crop_img = roi[y1:y2, x1:x2]
-                    if crop_img.size != 0:
-                        results_helmet = model_helmet.predict(source=crop_img, imgsz=320, conf=0.45, iou=0.45)[0]
-                        for helmet_box in results_helmet.boxes:
-                            hx1, hy1, hx2, hy2 = map(int, helmet_box.xyxy[0].tolist())
-                            hlabel = helmet_box.cls[0]
-                            hconfidence = helmet_box.conf[0]
-                            htext = f"{model_helmet.names[int(hlabel)]}: {hconfidence:.2f}"
-                            cv2.rectangle(roi, (x1 + hx1, y1 + hy1), (x1 + hx2, y1 + hy2), (255, 0, 0) if model_helmet.names[int(hlabel)] == "Without Helmet" else (0, 255, 0), 1)
-                            cv2.putText(roi, htext, (x1 + hx1, y1 + hy1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 0, 255) if model_helmet.names[int(hlabel)] == "Without Helmet" else (255, 0, 0), 1, cv2.LINE_AA)
+                    if violation_detected:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        violation_image_path = os.path.join(VIOLATION_FOLDER, f"violation_{timestamp}.jpg")
+                        frame_with_bounding_box = frame.copy()
+                        cv2.rectangle(frame_with_bounding_box, (roi_x1 + x1, roi_y1 + y1), (roi_x1 + x2, roi_y1 + y2), color, 2)
+                        cv2.putText(frame_with_bounding_box, f"{vehicle_label} - {alert_message}", (roi_x1 + x1, roi_y1 + y1 - 10), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color, 2)
+                        cv2.imwrite(violation_image_path, frame_with_bounding_box)
 
-                            if hconfidence > 0.65 and model_helmet.names[int(hlabel)] == "Without Helmet":
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                violation_image_path = os.path.join(VIOLATION_FOLDER, f"violation_{timestamp}.jpg")
-                                cv2.imwrite(violation_image_path, crop_img)
-
-                                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                executor.submit(save_violation_to_db, current_time, violation_image_path, video_path)
-
-            elif detection_type == 'lane':
-                # Implement lane departure detection
-                pass
+                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        executor.submit(save_violation_to_db, current_time, violation_image_path, video_path, "Lane Violation")
 
             elif detection_type == 'light':
                 tich_luy = 0
