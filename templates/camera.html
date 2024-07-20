@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -12,7 +11,6 @@
     <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
     <link href="/static/css/sb-admin-2.min.css" rel="stylesheet">
 </head>
-
 <body id="page-top">
     <div id="wrapper">
         {% include "sidebar.html" %}
@@ -135,22 +133,14 @@
                                 <div class="card-body">
                                     <form>
                                         <div class="form-group">
-                                            <div class="custom-control custom-checkbox">
-                                                <input type="checkbox" class="custom-control-input" id="vehicleDetection">
-                                                <label class="custom-control-label" for="vehicleDetection">Vehicle Detection</label>
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <div class="custom-control custom-checkbox">
-                                                <input type="checkbox" class="custom-control-input" id="helmetViolation">
-                                                <label class="custom-control-label" for="helmetViolation">Helmet Violation Detection</label>
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <div class="custom-control custom-checkbox">
-                                                <input type="checkbox" class="custom-control-input" id="laneDeparture">
-                                                <label class="custom-control-label" for="laneDeparture">Lane Departure Detection</label>
-                                            </div>
+                                            <label for="detectionType">Detection Type:</label>
+                                            <select id="detectionType" class="form-control">
+                                                <option value="none">None</option>
+                                                <option value="vehicle">Vehicle Detection</option>
+                                                <option value="helmet">Helmet Violation Detection</option>
+                                                <option value="lane">Lane Departure Detection</option>
+                                                <option value="light">Traffic Light Violation Detection</option>
+                                            </select>
                                         </div>
                                         <div class="form-group">
                                             <label for="roi_x1">ROI X1:</label>
@@ -168,6 +158,19 @@
                                             <label for="roi_y2">ROI Y2:</label>
                                             <input type="number" class="form-control" id="roi_y2" value="750">
                                         </div>
+                                        <div class="form-group" id="lightRoiSettings" style="display: none;">
+                                            <label for="light_roi_x1">Light ROI X1:</label>
+                                            <input type="number" class="form-control" id="light_roi_x1" value="0">
+                                            <label for="light_roi_y1">Light ROI Y1:</label>
+                                            <input type="number" class="form-control" id="light_roi_y1" value="0">
+                                            <label for="light_roi_x2">Light ROI X2:</label>
+                                            <input type="number" class="form-control" id="light_roi_x2" value="0">
+                                            <label for="light_roi_y2">Light ROI Y2:</label>
+                                            <input type="number" class="form-control" id="light_roi_y2" value="0">
+                                            <label for="y_line">Y Line:</label>
+                                            <input type="number" class="form-control" id="y_line" value="450">
+                                        </div>
+                                        <button type="button" class="btn btn-primary" onclick="startDetection()">Start Detection</button>
                                     </form>
                                 </div>
                             </div>
@@ -182,19 +185,30 @@
     </a>
     <script>
         var ws;
+        function startDetection() {
+            connectWebSocket(); // Only connect after configuration is complete
+        }
+
         function connectWebSocket() {
             if (ws) {
                 ws.close();
             }
             var video = document.getElementById('videoSelect').value;
-            var vehicleDetection = document.getElementById('vehicleDetection').checked;
-            var helmetViolation = document.getElementById('helmetViolation').checked;
-            var laneDeparture = document.getElementById('laneDeparture').checked;
+            var detectionType = document.getElementById('detectionType').value;
             var roi_x1 = document.getElementById('roi_x1').value;
             var roi_y1 = document.getElementById('roi_y1').value;
             var roi_x2 = document.getElementById('roi_x2').value;
             var roi_y2 = document.getElementById('roi_y2').value;
-            ws = new WebSocket(`ws://localhost:8000/ws/${video}?vehicleDetection=${vehicleDetection}&helmetViolation=${helmetViolation}&laneDeparture=${laneDeparture}&roi_x1=${roi_x1}&roi_y1=${roi_y1}&roi_x2=${roi_x2}&roi_y2=${roi_y2}`);
+            var ws_url = `ws://localhost:8000/ws/${video}?detectionType=${detectionType}&roi_x1=${roi_x1}&roi_y1=${roi_y1}&roi_x2=${roi_x2}&roi_y2=${roi_y2}`;
+            if (detectionType === 'light') {
+                var light_roi_x1 = document.getElementById('light_roi_x1').value;
+                var light_roi_y1 = document.getElementById('light_roi_y1').value;
+                var light_roi_x2 = document.getElementById('light_roi_x2').value;
+                var light_roi_y2 = document.getElementById('light_roi_y2').value;
+                var y_line = document.getElementById('y_line').value;
+                ws_url += `&lightRoiX1=${light_roi_x1}&lightRoiY1=${light_roi_y1}&lightRoiX2=${light_roi_x2}&lightRoiY2=${light_roi_y2}&yLine=${y_line}`;
+            }
+            ws = new WebSocket(ws_url);
             var img = document.getElementById("cameraFeed");
 
             ws.onmessage = function(event) {
@@ -205,13 +219,24 @@
         }
 
         document.getElementById('videoSelect').addEventListener('change', connectWebSocket);
-        document.getElementById('vehicleDetection').addEventListener('change', connectWebSocket);
-        document.getElementById('helmetViolation').addEventListener('change', connectWebSocket);
-        document.getElementById('laneDeparture').addEventListener('change', connectWebSocket);
+        document.getElementById('detectionType').addEventListener('change', function() {
+            var detectionType = document.getElementById('detectionType').value;
+            if (detectionType === 'light') {
+                document.getElementById('lightRoiSettings').style.display = 'block';
+            } else {
+                document.getElementById('lightRoiSettings').style.display = 'none';
+            }
+            connectWebSocket();
+        });
         document.getElementById('roi_x1').addEventListener('change', connectWebSocket);
         document.getElementById('roi_y1').addEventListener('change', connectWebSocket);
         document.getElementById('roi_x2').addEventListener('change', connectWebSocket);
         document.getElementById('roi_y2').addEventListener('change', connectWebSocket);
+        document.getElementById('light_roi_x1').addEventListener('change', connectWebSocket);
+        document.getElementById('light_roi_y1').addEventListener('change', connectWebSocket);
+        document.getElementById('light_roi_x2').addEventListener('change', connectWebSocket);
+        document.getElementById('light_roi_y2').addEventListener('change', connectWebSocket);
+        document.getElementById('y_line').addEventListener('change', connectWebSocket);
 
         document.getElementById('videoSelect').dispatchEvent(new Event('change'));
     </script>
@@ -224,5 +249,4 @@
     <script src="/static/js/demo/chart-pie-demo.js"></script>
     <script src="/static/js/demo/chart-bar-demo.js"></script>
 </body>
-
 </html>

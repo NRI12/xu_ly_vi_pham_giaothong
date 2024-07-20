@@ -2,7 +2,6 @@ fastapi
 uvicorn
 jinja2
 opencv-python
-torch 
 torchtext 
-torchvision 
 deep-sort-realtime
+ultralytics
