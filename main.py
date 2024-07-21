@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
@@ -16,6 +16,7 @@ import json
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/violations", StaticFiles(directory="violations"), name="violations")
 templates = Jinja2Templates(directory="templates")
 
 VIDEO_BASE_PATH = './data/video'
@@ -59,23 +60,58 @@ def save_violation_to_db(timestamp, image_path, video_path, category):
 @app.get("/", response_class=HTMLResponse)
 async def get_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
 @app.get("/tables", response_class=HTMLResponse)
-async def get_root(request: Request):
+async def get_tables(request: Request):
     return templates.TemplateResponse("tables.html", {"request": request})
 
 @app.get("/camera", response_class=HTMLResponse)
 async def get_camera(request: Request):
     video_files = os.listdir(VIDEO_BASE_PATH)
     return templates.TemplateResponse("camera.html", {"request": request, "video_files": video_files, "enumerate": enumerate})
+
 def get_all_violations():
     cursor.execute("SELECT * FROM violations")
     violations = cursor.fetchall()
+    print(violations)  # In ra để kiểm tra xem có dữ liệu hay không
     return violations
+
 
 @app.get("/api/violations")
 async def read_violations():
     violations = get_all_violations()
     return JSONResponse(content={"data": violations})
+@app.get("/api/statistics")
+async def get_statistics():
+    cursor.execute('SELECT COUNT(*) FROM violations WHERE category = "Lane Violation"')
+    lane_violations = cursor.fetchone()[0]
+
+    cursor.execute('SELECT COUNT(*) FROM violations WHERE category = "No Helmet"')
+    no_helmet_violations = cursor.fetchone()[0]
+
+    cursor.execute('SELECT COUNT(*) FROM violations WHERE category = "Light Violation"')
+    light_violations = cursor.fetchone()[0]
+
+    cursor.execute('SELECT COUNT(*) FROM violations')
+    total_violations = cursor.fetchone()[0]
+
+    return JSONResponse(content={
+        "lane_violations": lane_violations,
+        "no_helmet_violations": no_helmet_violations,
+        "light_violations": light_violations,
+        "total_violations": total_violations
+    })
+@app.get("/api/violations_daily")
+async def get_violations_daily():
+    cursor.execute("""
+        SELECT DATE(timestamp) as date, COUNT(*) as count
+        FROM violations
+        GROUP BY DATE(timestamp)
+        ORDER BY DATE(timestamp)
+    """)
+    violations_daily = cursor.fetchall()
+    data = [{"date": row[0], "count": row[1]} for row in violations_daily]
+    return JSONResponse(content={"data": data})
 @app.websocket("/ws/{video_name}")
 async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int = 100, roi_y1: int = 350, roi_x2: int = 1150, roi_y2: int = 750):
     global active_websocket
@@ -181,7 +217,7 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
 
                     # Determine violation based on lane and position
                     if (lane == "Left" and vehicle_center_x > midpoint_x) or (lane == "Right" and vehicle_center_x < midpoint_x):
-                        alert_message = f"Violation!!! Lane of vehicle in {lane}"
+                        alert_message = f"Violation!!! Lane of vehicles"
                         violation_detected = True
                         color = (0, 0, 255)  # Red for violation
                     else:
@@ -212,15 +248,20 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
                 light_roi_x2 = int(query_params.get('lightRoiX2', [0])[0])
                 light_roi_y2 = int(query_params.get('lightRoiY2', [0])[0])
                 y_line = int(query_params.get('yLine', [450])[0])
+                y_line_buffer = 30  # Buffer zone around y_line
 
                 light_frame = frame[light_roi_y1:light_roi_y2, light_roi_x1:light_roi_x2, :]
-
                 red, tich_luy, _ = is_red(light_frame, tich_luy_hien_tai=tich_luy)
-                text = 'red' if red else 'green'
+                text = 'RED' if red else 'GREEN'
                 light_color = (0, 0, 255) if red else (0, 255, 0)
 
-                result = model_vehicle.predict(roi, conf=0.35, verbose=False)
+                # Draw light ROI bounding box and y_line
+                cv2.putText(frame, f"Light: {text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, light_color, 2)
 
+                cv2.rectangle(frame, (light_roi_x1, light_roi_y1), (light_roi_x2, light_roi_y2), (0, 255, 255), 2)
+                cv2.line(frame, (0, y_line), (frame.shape[1], y_line), (0, 255, 255), 2)
+
+                result = model_vehicle.predict(roi, conf=0.35, verbose=False)
                 if len(result):
                     result = result[0]
                     names = result.names
@@ -232,54 +273,51 @@ async def websocket_endpoint(websocket: WebSocket, video_name: str, roi_x1: int 
                         detect.append([[x1, y1, x2 - x1, y2 - y1], conf, cls])
 
                     tracks = track_light.update_tracks(detect, frame=roi)
-
                     for i, track in enumerate(tracks):
                         if track.is_confirmed() and track.det_conf:
                             ltrb = track.to_ltrb()
                             x1, y1, x2, y2 = list(map(int, ltrb))
-                            yc = y1 + abs(y2 - y1) // 2
+                            yc = roi_y1 + (y1 + (y2 - y1) // 2)
 
                             track_id = track.track_id
-                            name = names[track.det_class]
-                            color = (np.random.randint(0, 255, size=(5, 3))[track.det_class]).tolist()
-                            is_ok = ok.get(track_id, None)
 
-                            label = None
+                            is_ok = ok.get(track_id, None)
+                            label = None  # Khởi tạo nhãn là None
+
                             if is_ok:
                                 label = "k vuot" if ok[track_id] == 2 else 'vuot'
                             else:
                                 state = state_all.get(track_id)
-
                                 if state is None:
-                                    if yc < y_line:
+                                    if yc > (y_line + y_line_buffer):
                                         ok[track_id] = 2
                                         label = "k vuot"
+                                    elif yc < (y_line - y_line_buffer) and red:
+                                        ok[track_id] = 1
+                                        label = "vuot"
                                     else:
                                         state_all[track_id] = red
                                 else:
-                                    if yc < y_line:
+                                    if yc > (y_line + y_line_buffer):
                                         ok[track_id] = 1 if state_all[track_id] else 2
                                         label = "k vuot" if ok[track_id] == 2 else 'vuot'
+                                    elif yc < (y_line - y_line_buffer) and red:
+                                        ok[track_id] = 1
+                                        label = "vuot"
                                     else:
                                         state_all[track_id] = red
 
-                            if label is None:
-                                label = f"{track_id} : {name[:3]} {round(track.det_conf, 2)}"
-                            else:
+                            if label:  # Chỉ hiển thị nhãn khi có giá trị "vượt" hoặc "k vượt"
                                 color = (0, 0, 255) if label == 'vuot' else (0, 255, 0)
-
-                            cv2.rectangle(roi, (x1, y1), (x2, y2), color, 2)
-                            cv2.rectangle(roi, (x1 - 1, y1 - 20), (x1 + len(label) * 12, y1), color, -1)
-                            cv2.putText(roi, label, (x1 + 5, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-                frame[roi_y1:roi_y2, roi_x1:roi_x2] = roi
-                frame = draw_text(frame, text, color=light_color)
-
+                                cv2.rectangle(roi, (x1, y1), (x2, y2), color, 2)
+                                cv2.rectangle(roi, (x1 - 1, y1 - 20), (x1 + len(label) * 12, y1), color, -1)
+                                cv2.putText(roi, label, (x1 + 5, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             frame[roi_y1:roi_y2, roi_x1:roi_x2] = roi
             cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (255, 0, 0), 3)
 
             _, buffer = cv2.imencode('.jpg', frame)
             await websocket.send_bytes(buffer.tobytes())
+
     except WebSocketDisconnect:
         print("WebSocket disconnected")
     except Exception as e:

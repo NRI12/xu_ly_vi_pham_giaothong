@@ -89,7 +89,7 @@
                         <li class="nav-item dropdown no-arrow">
                             <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                                 <span class="mr-2 d-none d-lg-inline text-gray-600 small">Admin</span>
-                                <img class="img-profile rounded-circle" src="img/undraw_profile.svg">
+                                <img class="img-profile rounded-circle" src="/static/img/undraw_profile.svg">
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--grow-in" aria-labelledby="userDropdown">
                                 <a class="dropdown-item" href="#">
@@ -120,8 +120,8 @@
                                         <tr>
                                             <th>ID</th>
                                             <th>Thời gian</th>
-                                            <th>Đường dẫn hình ảnh</th>
-                                            <th>Đường dẫn video</th>
+                                            <th>Hình ảnh</th>
+                                            <th>Video</th>
                                             <th>Loại vi phạm</th>
                                         </tr>
                                     </thead>
@@ -156,37 +156,40 @@
             </div>
         </div>
     </div>
-    <script src="vendor/jquery/jquery.min.js"></script>
-    <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-    <script src="vendor/jquery-easing/jquery.easing.min.js"></script>
-    <script src="js/sb-admin-2.min.js"></script>
-    <script src="vendor/datatables/jquery.dataTables.min.js"></script>
-    <script src="vendor/datatables/dataTables.bootstrap4.min.js"></script>
-    <script src="js/demo/datatables-demo.js"></script>
-    <script src="js/sb-admin-2.js"></script>
-    <!-- AJAX request to load data from API -->
+    <!-- Ensure jQuery is loaded before any other script -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+    <script src="/static/js/sb-admin-2.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
     <script>
         $(document).ready(function() {
-            $.ajax({
-                url: "/api/violations",
-                method: "GET",
-                success: function(response) {
-                    var data = response.data;
-                    var tableBody = $("#dataTable tbody");
-                    tableBody.empty(); // Clear old data
-                    data.forEach(function(violation) {
-                        var row = $("<tr>");
-                        row.append($("<td>").text(violation[0])); // ID
-                        row.append($("<td>").text(violation[1])); // Timestamp
-                        row.append($("<td>").text(violation[2])); // Image Path
-                        row.append($("<td>").text(violation[3])); // Video Path
-                        row.append($("<td>").text(violation[4])); // Category
-                        tableBody.append(row);
-                    });
+            $('#dataTable').DataTable({
+                "pageLength": 10,
+                "lengthMenu": [5, 10, 25, 50, 100],
+                "ajax": {
+                    "url": "/api/violations",
+                    "dataSrc": "data"
                 },
-                error: function(error) {
-                    console.log("Error loading data", error);
-                }
+                "columns": [
+                    { "data": 0 }, // ID
+                    { "data": 1 }, // Timestamp
+                    { 
+                        "data": 2, // Image Path
+                        "render": function(data, type, row) {
+                            return '<img src="'+data+'" alt="Violation Image" width="100">';
+                        }
+                    },
+                    { 
+                        "data": 3, // Video Path
+                        "render": function(data, type, row) {
+                            var videoName = data.split('/').pop().split('.').shift();
+                            return '<a href="'+data+'">'+videoName+'</a>';
+                        }
+                    },
+                    { "data": 4 }  // Category
+                ]
             });
         });
     </script>

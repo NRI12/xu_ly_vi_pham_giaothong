@@ -1,55 +1,49 @@
-
 import numpy as np
 import cv2
-def draw_text(image,
-              text,
-              org = (50,50),
-              fontFace = cv2.FONT_HERSHEY_SIMPLEX,
-              fontScale = 2,
-              color = (0, 0, 255) , # white color
-              thickness = 2
-              ):
-    image = image.copy()
-    image = cv2.putText(image, text, org, fontFace, fontScale, color, thickness)
-    return image
+
+def draw_text(image, text, org=(50, 50), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(0, 0, 255), thickness=2):
+    return cv2.putText(image, text, org, fontFace, fontScale, color, thickness)
+
+# Function to convert bounding box format from [x1, y1, x2, y2] to [x, y, w, h]
 def xyxy2xywh(x):
-    # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] where xy1=top-left, xy2=bottom-right
-    y = x.clone() 
+    y = x.clone()
     y[:, 0] = (x[:, 0] + x[:, 2]) / 2  # x center
     y[:, 1] = (x[:, 1] + x[:, 3]) / 2  # y center
     y[:, 2] = x[:, 2] - x[:, 0]  # width
     y[:, 3] = x[:, 3] - x[:, 1]  # height
     return y
-def is_red(frame, mode='bgr', threshold=0.008, tich_luy_hien_tai=None, tich_luy=3, visualize=False):
-    h, w = frame.shape[:2]
-    if mode == 'bgr':
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    elif mode == 'rgb':
-        hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
 
-    lower_red1 = np.array([0, 50, 50])
+# Function to detect if a frame is red
+def is_red(frame, threshold=0.008, tich_luy_hien_tai=0, tich_luy=3):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lower_red1 = np.array([0, 70, 50])
     upper_red1 = np.array([10, 255, 255])
-    mask0 = cv2.inRange(hsv, lower_red1, upper_red1)
-
-    lower_red2 = np.array([170, 50, 50])
+    lower_red2 = np.array([170, 70, 50])
     upper_red2 = np.array([180, 255, 255])
-    mask1 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    red_mask = mask1 | mask2
+    red_ratio = np.sum(red_mask) / red_mask.size
 
-    mask = mask0 + mask1
-    rate = np.count_nonzero(mask) / (w * h)
-
-    if rate > threshold:
-        result = [True, 0]
+    if red_ratio > threshold:
+        return True, tich_luy_hien_tai + 1, None
     else:
-        if tich_luy_hien_tai is not None and tich_luy_hien_tai < tich_luy:
-            result = [True, tich_luy_hien_tai + 1]
-        else:
-            result = [False, 99]
+        return False, tich_luy_hien_tai, None
 
-    if visualize:
-        result.append(cv2.bitwise_and(frame, frame, mask=mask))
-    else:
-        result.append(None)
+def save_violation_data(track_id, label, image_path, timestamp):
+    conn = sqlite3.connect('violations.db')
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS violations
+                      (track_id TEXT, label TEXT, image_path TEXT, timestamp TEXT)''')
+    cursor.execute("INSERT INTO violations VALUES (?, ?, ?, ?)", (track_id, label, image_path, timestamp))
+    conn.commit()
+    conn.close()
 
-    return result
-    
+# Helper function to save image of the entire frame with only the violator's bounding box
+def save_frame_snapshot(frame, bbox, image_path):
+    # Copy the frame to not affect the display
+    frame_copy = np.copy(frame)
+    x1, y1, x2, y2 = bbox
+    # Draw bounding box for the violator
+    cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Red box for violator
+    cv2.imwrite(image_path, frame_copy)
