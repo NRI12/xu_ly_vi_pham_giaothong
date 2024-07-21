@@ -6,11 +6,16 @@ Hệ thống này được thiết kế để phát hiện và xử lý các vi 
 ## Tính Năng
 
 - **Phát hiện phương tiện**: Sử dụng các mô hình như YOLO và Faster R-CNN để nhận diện và theo dõi các phương tiện.
+  ![Phát hiện phương tiện](img/1.jpg)
 - **Phát hiện mũ bảo hiểm**: Nhận diện việc đeo hoặc không đeo mũ bảo hiểm của người lái xe.
+  ![Phát hiện mũ bảo hiểm](img/2.jpg)
 - **Phát hiện vi phạm đèn đỏ và làn đường**: Xác định các hành vi vượt đèn đỏ và đi sai làn đường.
+  ![Phát hiện vi phạm đèn đỏ](img/4.jpg)
+  ![Phát hiện vi phạm làn đường](img/3.jpg)
 - **Xử lý vi phạm**: Tự động tạo báo cáo và gửi thông báo vi phạm qua email.
+  ![Báo cáo](img/5.jpg)
 - **Thống kê**: Tổng hợp và hiển thị số liệu thống kê về các vi phạm.
-
+  ![Thống kê](img/6.jpg)
 ## Cài Đặt
 
 Để cài đặt hệ thống, vui lòng tham khảo chi tiết trong tài liệu hướng dẫn đính kèm.
